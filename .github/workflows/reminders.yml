@@ -1,0 +1,29 @@
+name: Mess reminders
+
+on:
+  schedule:
+    # Every 5 minutes, all day. GitHub may delay a few minutes under load —
+    # fine for a meal reminder, not fine for anything time-critical.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab to test
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        working-directory: actions
+        run: npm install
+      - name: Send due reminders
+        working-directory: actions
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+        run: node send-reminders.js

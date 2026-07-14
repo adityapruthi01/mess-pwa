@@ -1,0 +1,16 @@
+{
+  "name": "mess-reminders",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scheduled script that sends push reminders for the mess menu, run by GitHub Actions.",
+  "main": "send-reminders.js",
+  "scripts": {
+    "start": "node send-reminders.js"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

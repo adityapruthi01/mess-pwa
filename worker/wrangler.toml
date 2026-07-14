@@ -1,0 +1,9 @@
+name = "mess-push"
+main = "subscribe-worker.js"
+compatibility_date = "2024-11-01"
+
+# After running: wrangler kv namespace create MESS_SUBS
+# paste the returned id below.
+[[kv_namespaces]]
+binding = "MESS_SUBS"
+id = "8903e5cbbe3e437e95a21778c8026aaf"

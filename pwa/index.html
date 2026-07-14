@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mess Board</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#26362b">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Work+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ---- CONFIG: fill these in after you deploy the Worker & generate VAPID keys ---- */
+  /* See config.js */
+</style>
+<script src="config.js"></script>
+<style>
+  :root{--board:#26362b;--chalk:#eee6d3;--chalk-dim:#b9c2b6;--turmeric:#d7a52b;--rust:#c0503b;--sage:#8aa27c;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:radial-gradient(ellipse at top left,#2f4335 0%,var(--board) 45%),var(--board);color:var(--chalk);font-family:'Work Sans',sans-serif;min-height:100vh;padding:26px 16px 50px;}
+  .wrap{max-width:560px;margin:0 auto;}
+  h1{font-family:'Caveat',cursive;font-size:44px;text-align:center;margin:0 0 4px;transform:rotate(-1deg);}
+  .sub{text-align:center;font-size:13px;color:var(--chalk-dim);margin-bottom:20px;}
+  .panel{background:rgba(0,0,0,.16);border:1px solid rgba(238,230,211,.14);border-radius:14px;padding:18px;margin-bottom:16px;}
+  .panel h2{font-family:'Caveat',cursive;font-size:24px;margin:0 0 10px;color:var(--turmeric);}
+  select,input,button{font-family:'Work Sans',sans-serif;font-size:13.5px;}
+  select,input[type=time]{background:rgba(238,230,211,.06);border:1px solid rgba(238,230,211,.22);color:var(--chalk);padding:8px 10px;border-radius:8px;width:100%;margin-bottom:8px;}
+  .btn{background:var(--turmeric);border:none;color:#26241a;font-weight:600;padding:11px 16px;border-radius:8px;cursor:pointer;width:100%;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .btn.secondary{background:transparent;border:1px solid rgba(238,230,211,.3);color:var(--chalk);}
+  .row{display:flex;gap:10px;}
+  .row > *{flex:1;}
+  .status{font-size:12px;color:var(--chalk-dim);margin-top:8px;font-family:'JetBrains Mono',monospace;}
+  .tag-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+  .tag{background:rgba(238,230,211,.08);border:1px solid rgba(238,230,211,.22);border-radius:16px;padding:4px 10px;font-size:12.5px;display:flex;align-items:center;gap:5px;}
+  .tag button{background:none;border:none;color:inherit;cursor:pointer;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Mess Board</h1>
+  <div class="sub">Push reminders, tuned to your taste</div>
+
+  <div class="panel">
+    <h2>1. Your hall</h2>
+    <input type="text" id="nameInput" placeholder="Your name (for the greeting)" value="Aditya">
+    <select id="hallSelect"><option>Loading halls…</option></select>
+  </div>
+
+  <div class="panel">
+    <h2>2. Your taste</h2>
+    <div class="tag-row" id="likeTags"></div>
+    <input type="text" id="likeInput" placeholder="You like: e.g. paneer, idli — Enter to add">
+    <div class="tag-row" id="dislikeTags"></div>
+    <input type="text" id="dislikeInput" placeholder="You avoid: e.g. bhindi — Enter to add">
+  </div>
+
+  <div class="panel">
+    <h2>3. Reminder times</h2>
+    <div class="row">
+      <label>Breakfast<input type="time" id="tBreakfast" value="07:15"></label>
+      <label>Lunch<input type="time" id="tLunch" value="11:45"></label>
+      <label>Dinner<input type="time" id="tDinner" value="18:45"></label>
+    </div>
+    <label style="font-size:12.5px;color:var(--chalk-dim);display:flex;align-items:center;gap:6px;margin-top:4px;">
+      <input type="checkbox" id="nightBefore" style="width:auto;"> Also send a heads-up the night before (9 PM)
+    </label>
+  </div>
+
+  <div class="panel">
+    <button class="btn" id="subscribeBtn">Enable push reminders</button>
+    <div class="status" id="status">Fill in config.js with your Worker URL and VAPID key first (see README).</div>
+  </div>
+
+  <div class="panel">
+    <button class="btn secondary" id="testBtn">Send me a test push</button>
+  </div>
+</div>
+
+<script>
+let prefs = { liked: [], disliked: [] };
+let selectedHallId = null;
+let halls = [];
+
+const $ = id => document.getElementById(id);
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function loadHalls(){
+  try{
+    const day = new Date().toLocaleDateString('en-US',{weekday:'long'});
+    const res = await fetch(`https://campusmess.in/api/today?day=${day}&meal=Breakfast`, { credentials:'omit' });
+    const body = await res.json();
+    halls = (body.data||[]).map(h => ({id:h.id, name:h.name, type:h.type})).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+    const sel = $('hallSelect');
+    sel.innerHTML = halls.map(h => `<option value="${h.id}">${h.name} (${h.type})</option>`).join('');
+    selectedHallId = halls[0]?.id;
+    sel.onchange = () => { selectedHallId = Number(sel.value); };
+  }catch(e){
+    $('hallSelect').innerHTML = '<option>Could not load halls — check connection</option>';
+  }
+}
+
+function renderTags(){
+  $('likeTags').innerHTML = prefs.liked.map((t,i)=>`<span class="tag">${t}<button data-list="liked" data-i="${i}">×</button></span>`).join('');
+  $('dislikeTags').innerHTML = prefs.disliked.map((t,i)=>`<span class="tag">${t}<button data-list="disliked" data-i="${i}">×</button></span>`).join('');
+  document.querySelectorAll('.tag button').forEach(b => b.onclick = () => {
+    prefs[b.dataset.list].splice(Number(b.dataset.i),1); renderTags();
+  });
+}
+$('likeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.liked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
+$('dislikeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.disliked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
+
+async function subscribe(){
+  if(!window.MESS_CONFIG || !window.MESS_CONFIG.WORKER_URL || !window.MESS_CONFIG.VAPID_PUBLIC_KEY || window.MESS_CONFIG.VAPID_PUBLIC_KEY.startsWith('PASTE')){
+    $('status').textContent = 'config.js is not filled in yet — add your Worker URL and VAPID public key first.';
+    return;
+  }
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+    $('status').textContent = 'This browser does not support push notifications.';
+    return;
+  }
+  $('status').textContent = 'Registering…';
+  const reg = await navigator.serviceWorker.register('sw.js');
+  await navigator.serviceWorker.ready;
+
+  const perm = await Notification.requestPermission();
+  if(perm !== 'granted'){
+    $('status').textContent = 'Notification permission denied — enable it in your browser/site settings to continue.';
+    return;
+  }
+
+  let sub = await reg.pushManager.getSubscription();
+  if(!sub){
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(window.MESS_CONFIG.VAPID_PUBLIC_KEY)
+    });
+  }
+
+  const payload = {
+    subscription: sub.toJSON(),
+    hallId: selectedHallId,
+    prefs,
+    times: {
+      Breakfast: $('tBreakfast').value,
+      Lunch: $('tLunch').value,
+      Dinner: $('tDinner').value
+    },
+    nightBefore: $('nightBefore').checked,
+    name: $('nameInput').value.trim() || 'there'
+  };
+
+  try{
+    const res = await fetch(`${window.MESS_CONFIG.WORKER_URL}/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    $('status').textContent = 'Reminders are on. You can close this tab — the schedule runs on the server now.';
+  }catch(e){
+    $('status').textContent = `Saved locally but failed to reach the server (${e.message}). Check your Worker URL.`;
+  }
+}
+
+async function sendTest(){
+  if(!window.MESS_CONFIG?.WORKER_URL){ $('status').textContent='Fill in config.js first.'; return; }
+  try{
+    const res = await fetch(`${window.MESS_CONFIG.WORKER_URL}/test`, { method:'POST' });
+    $('status').textContent = res.ok ? 'Test push requested — check your notifications.' : `Test failed (HTTP ${res.status}).`;
+  }catch(e){
+    $('status').textContent = `Test failed (${e.message}).`;
+  }
+}
+
+$('subscribeBtn').onclick = subscribe;
+$('testBtn').onclick = sendTest;
+
+loadHalls();
+renderTags();
+
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>
