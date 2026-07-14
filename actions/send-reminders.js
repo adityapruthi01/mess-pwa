@@ -1,7 +1,15 @@
 // Runs on a schedule via GitHub Actions (every 5 minutes).
-// For each stored subscriber: if the current IST time matches one of their
-// reminder times, fetch that meal's menu from campusmess.in, check it
-// against their preferences, and push a notification.
+//
+// Two kinds of push per meal:
+//   - "planning" push: fires at planTimes.Lunch / planTimes.Dinner (same day)
+//     or, for breakfast, at a fixed 21:00 IST the night before (if the
+//     subscriber has nightBeforePlan on). Teases the best-matching hall and
+//     deep-links into the PWA's picker screen (index.html?pick=<meal>&date=...).
+//   - "confirm" push: fires at times.Breakfast/Lunch/Dinner. Reads back
+//     whatever hall the subscriber picked (via the Worker's /picks) for
+//     that service date + meal, and sends the "ready for X at Hall Y?"
+//     message. Falls back to auto-picking the best hall if nothing was
+//     picked in time.
 
 const webpush = require('web-push');
 
@@ -27,6 +35,11 @@ function dayName(d) {
   return d.toLocaleDateString('en-US', { weekday: 'long' });
 }
 
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ---- shared menu-matching logic (kept in sync with index.html) ----
 function splitItems(desc) {
   if (!desc) return [];
   return desc.split(/[,\/]| with | and /i).map(s => s.trim()).filter(Boolean);
@@ -41,23 +54,37 @@ function verdictFor(desc, prefs) {
   return { tag: 'meh', liked, disliked };
 }
 
-async function fetchMenu(day, meal, hallId) {
+function bestHallFor(halls, prefs) {
+  const scored = halls
+    .map(h => ({ h, verdict: verdictFor(h.currentMenu ? h.currentMenu.description : '', prefs || {}) }))
+    .filter(s => s.verdict.tag !== 'skip');
+  if (!scored.length) return null;
+  scored.sort((a, b) => (a.verdict.tag === 'go' ? 0 : 1) - (b.verdict.tag === 'go' ? 0 : 1));
+  return scored[0].h;
+}
+
+const hallsCache = new Map();
+async function fetchAllHalls(day, meal) {
+  const cacheKey = `${day}:${meal}`;
+  if (hallsCache.has(cacheKey)) return hallsCache.get(cacheKey);
   const res = await fetch(`https://campusmess.in/api/today?day=${encodeURIComponent(day)}&meal=${encodeURIComponent(meal)}`);
   if (!res.ok) throw new Error(`campusmess.in HTTP ${res.status}`);
   const body = await res.json();
-  const hall = (body.data || []).find(h => h.id === hallId);
-  return hall ? hall.currentMenu : null;
+  const halls = body.data || [];
+  hallsCache.set(cacheKey, halls);
+  return halls;
 }
 
-function buildMessage(name, hallName, meal, menu, verdict) {
-  const desc = menu ? menu.description : 'no menu posted yet';
-  if (verdict.tag === 'go') {
-    return `${name}, ${desc} at ${hallName} for ${meal.toLowerCase()} — sounds like your kind of meal!`;
-  }
-  if (verdict.tag === 'skip') {
-    return `${name}, ${meal} at ${hallName} today is ${desc} — might not be your thing.`;
-  }
-  return `${name}, ready for ${meal.toLowerCase()} at ${hallName}? Today: ${desc}`;
+function buildConfirmMessage(name, hallName, meal, desc, wasAutoPicked) {
+  if (!desc) return `${name}, ready for ${meal.toLowerCase()}? ${hallName ? `${hallName}'s` : 'the'} menu isn't posted yet.`;
+  if (wasAutoPicked) return `${name}, you didn't pick — best guess: ${desc} at ${hallName} for ${meal.toLowerCase()}.`;
+  return `${name}, ready for ${desc} at ${hallName} for ${meal.toLowerCase()}?`;
+}
+
+function buildTeaserMessage(name, meal, bestHall) {
+  if (!bestHall) return `${name}, time to pick your ${meal.toLowerCase()} hall — tap to see today's menus.`;
+  const desc = bestHall.currentMenu ? bestHall.currentMenu.description : '';
+  return `${name}, ${bestHall.name} has ${desc || 'something good'} — tap to pick your ${meal.toLowerCase()} hall.`;
 }
 
 async function getSubscribers() {
@@ -68,9 +95,20 @@ async function getSubscribers() {
   return res.json();
 }
 
-async function sendPush(subscription, title, body) {
+async function getPicks(date) {
+  const res = await fetch(`${WORKER_URL}/picks?date=${encodeURIComponent(date)}`, {
+    headers: { Authorization: `Bearer ${ADMIN_SECRET}` }
+  });
+  if (!res.ok) throw new Error(`picks fetch failed: HTTP ${res.status}`);
+  const list = await res.json();
+  const map = new Map();
+  for (const p of list) map.set(`${p.id}:${p.meal}`, p);
+  return map;
+}
+
+async function sendPush(subscription, title, body, url) {
   try {
-    await webpush.sendNotification(subscription, JSON.stringify({ title, body }));
+    await webpush.sendNotification(subscription, JSON.stringify({ title, body, url }));
   } catch (e) {
     console.error('push failed', e.statusCode, e.body);
   }
@@ -80,44 +118,59 @@ async function main() {
   const now = istNow();
   const currentHHMM = hhmm(now);
   const today = dayName(now);
-  const tomorrow = dayName(new Date(now.getTime() + 24 * 3600 * 1000));
+  const todayISO = isoDate(now);
+  const tomorrowD = new Date(now.getTime() + 24 * 3600 * 1000);
+  const tomorrow = dayName(tomorrowD);
+  const tomorrowISO = isoDate(tomorrowD);
 
   const subs = await getSubscribers();
   console.log(`[${currentHHMM} IST] checking ${subs.length} subscriber(s)`);
 
+  const picksToday = await getPicks(todayISO);
+
   for (const sub of subs) {
     const name = sub.name || 'there';
-    const hallId = sub.hallId;
+    const prefs = sub.prefs || {};
     const times = sub.times || {};
-    const meals = ['Breakfast', 'Lunch', 'Dinner'];
+    const planTimes = sub.planTimes || {};
 
-    for (const meal of meals) {
-      if (times[meal] === currentHHMM) {
-        try {
-          const menu = await fetchMenu(today, meal, hallId);
-          const verdict = verdictFor(menu ? menu.description : '', sub.prefs || {});
-          const hallName = menu ? undefined : null;
-          const msg = buildMessage(name, `Hall ${hallId}`, meal, menu, verdict);
-          await sendPush(sub.subscription, `${meal} check`, msg);
-          console.log(`sent ${meal} reminder to ${name}`);
-        } catch (e) {
-          console.error(`failed to build/send ${meal} reminder:`, e.message);
+    // ---- confirm pushes (today's meals) ----
+    for (const meal of ['Breakfast', 'Lunch', 'Dinner']) {
+      if (times[meal] !== currentHHMM) continue;
+      try {
+        const halls = await fetchAllHalls(today, meal);
+        const pick = picksToday.get(`${sub.id}:${meal}`);
+        let hall = pick ? halls.find(h => h.id === pick.hallId) : null;
+        let wasAutoPicked = false;
+        if (!hall) {
+          hall = bestHallFor(halls, prefs);
+          wasAutoPicked = true;
         }
+        const desc = hall && hall.currentMenu ? hall.currentMenu.description : null;
+        const msg = buildConfirmMessage(name, hall ? hall.name : null, meal, desc, wasAutoPicked);
+        await sendPush(sub.subscription, `${meal} time`, msg, './index.html');
+        console.log(`sent ${meal} confirm to ${name}${wasAutoPicked ? ' (auto-picked)' : ''}`);
+      } catch (e) {
+        console.error(`failed to build/send ${meal} confirm:`, e.message);
       }
     }
 
-    // Night-before heads-up, fixed at 21:00 IST
-    if (sub.nightBefore && currentHHMM === '21:00') {
+    // ---- planning pushes ----
+    const planningJobs = [];
+    if (planTimes.Lunch === currentHHMM) planningJobs.push({ meal: 'Lunch', day: today, date: todayISO });
+    if (planTimes.Dinner === currentHHMM) planningJobs.push({ meal: 'Dinner', day: today, date: todayISO });
+    if (sub.nightBeforePlan && currentHHMM === '21:00') planningJobs.push({ meal: 'Breakfast', day: tomorrow, date: tomorrowISO });
+
+    for (const job of planningJobs) {
       try {
-        const lunch = await fetchMenu(tomorrow, 'Lunch', hallId);
-        const dinner = await fetchMenu(tomorrow, 'Dinner', hallId);
-        const parts = [];
-        if (lunch) parts.push(`Lunch: ${lunch.description}`);
-        if (dinner) parts.push(`Dinner: ${dinner.description}`);
-        await sendPush(sub.subscription, `Tomorrow's menu`, `${name}, tomorrow — ${parts.join(' · ') || 'menu not posted yet'}`);
-        console.log(`sent night-before preview to ${name}`);
+        const halls = await fetchAllHalls(job.day, job.meal);
+        const best = bestHallFor(halls, prefs);
+        const msg = buildTeaserMessage(name, job.meal, best);
+        const url = `./index.html?pick=${encodeURIComponent(job.meal)}&date=${job.date}`;
+        await sendPush(sub.subscription, `Pick your ${job.meal.toLowerCase()}`, msg, url);
+        console.log(`sent ${job.meal} planning push to ${name}`);
       } catch (e) {
-        console.error('failed to send night-before preview:', e.message);
+        console.error(`failed to build/send ${job.meal} planning push:`, e.message);
       }
     }
   }

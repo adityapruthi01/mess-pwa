@@ -9,10 +9,6 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Work+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-  /* ---- CONFIG: fill these in after you deploy the Worker & generate VAPID keys ---- */
-  /* See config.js */
-</style>
 <script src="config.js"></script>
 <style>
   :root{--board:#26362b;--chalk:#eee6d3;--chalk-dim:#b9c2b6;--turmeric:#d7a52b;--rust:#c0503b;--sage:#8aa27c;}
@@ -30,59 +26,85 @@
   .btn.secondary{background:transparent;border:1px solid rgba(238,230,211,.3);color:var(--chalk);}
   .row{display:flex;gap:10px;}
   .row > *{flex:1;}
+  .row label{font-size:12px;color:var(--chalk-dim);display:block;}
   .status{font-size:12px;color:var(--chalk-dim);margin-top:8px;font-family:'JetBrains Mono',monospace;}
   .tag-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
   .tag{background:rgba(238,230,211,.08);border:1px solid rgba(238,230,211,.22);border-radius:16px;padding:4px 10px;font-size:12.5px;display:flex;align-items:center;gap:5px;}
   .tag button{background:none;border:none;color:inherit;cursor:pointer;font-size:13px;}
+  .hallcard{background:rgba(238,230,211,.05);border:1px solid rgba(238,230,211,.16);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;}
+  .hallcard:active{background:rgba(238,230,211,.1);}
+  .hallcard.go{border-color:var(--sage);}
+  .hallcard .name{font-weight:600;font-size:15px;}
+  .hallcard .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;margin-left:6px;vertical-align:middle;}
+  .hallcard .badge.go{background:var(--sage);color:#1a2417;}
+  .hallcard .desc{font-size:13px;color:var(--chalk-dim);margin-top:4px;}
+  .hallcard .special{font-size:11.5px;color:var(--turmeric);margin-top:6px;}
+  .link{color:var(--turmeric);text-decoration:underline;cursor:pointer;font-size:12.5px;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Mess Board</h1>
-  <div class="sub">Push reminders, tuned to your taste</div>
+  <div class="sub" id="subline">Push reminders, tuned to your taste</div>
 
-  <div class="panel">
-    <h2>1. Your hall</h2>
-    <input type="text" id="nameInput" placeholder="Your name (for the greeting)" value="Aditya">
-    <select id="hallSelect"><option>Loading halls…</option></select>
-  </div>
-
-  <div class="panel">
-    <h2>2. Your taste</h2>
-    <div class="tag-row" id="likeTags"></div>
-    <input type="text" id="likeInput" placeholder="You like: e.g. paneer, idli — Enter to add">
-    <div class="tag-row" id="dislikeTags"></div>
-    <input type="text" id="dislikeInput" placeholder="You avoid: e.g. bhindi — Enter to add">
-  </div>
-
-  <div class="panel">
-    <h2>3. Reminder times</h2>
-    <div class="row">
-      <label>Breakfast<input type="time" id="tBreakfast" value="07:15"></label>
-      <label>Lunch<input type="time" id="tLunch" value="11:45"></label>
-      <label>Dinner<input type="time" id="tDinner" value="18:45"></label>
+  <div id="settingsView">
+    <div class="panel">
+      <h2>1. You</h2>
+      <input type="text" id="nameInput" placeholder="Your name (for the greeting)" value="Aditya">
     </div>
-    <label style="font-size:12.5px;color:var(--chalk-dim);display:flex;align-items:center;gap:6px;margin-top:4px;">
-      <input type="checkbox" id="nightBefore" style="width:auto;"> Also send a heads-up the night before (9 PM)
-    </label>
+
+    <div class="panel">
+      <h2>2. Your taste</h2>
+      <div class="tag-row" id="likeTags"></div>
+      <input type="text" id="likeInput" placeholder="You like: e.g. paneer, idli — Enter to add">
+      <div class="tag-row" id="dislikeTags"></div>
+      <input type="text" id="dislikeInput" placeholder="You never eat: e.g. bhindi — Enter to add">
+    </div>
+
+    <div class="panel">
+      <h2>3. When to ask you to pick</h2>
+      <div class="row">
+        <label>Lunch pick time<input type="time" id="pLunch" value="11:00"></label>
+        <label>Dinner pick time<input type="time" id="pDinner" value="17:00"></label>
+      </div>
+      <label style="font-size:12.5px;color:var(--chalk-dim);display:flex;align-items:center;gap:6px;margin-top:4px;">
+        <input type="checkbox" id="nightBeforePlan" checked style="width:auto;"> Ask me to pick tomorrow's breakfast tonight (9 PM)
+      </label>
+    </div>
+
+    <div class="panel">
+      <h2>4. When to remind you it's time to eat</h2>
+      <div class="row">
+        <label>Breakfast<input type="time" id="tBreakfast" value="07:15"></label>
+        <label>Lunch<input type="time" id="tLunch" value="12:45"></label>
+        <label>Dinner<input type="time" id="tDinner" value="19:45"></label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <button class="btn" id="subscribeBtn">Enable push reminders</button>
+      <div class="status" id="status">Fill in config.js with your Worker URL and VAPID key first (see README).</div>
+    </div>
+
+    <div class="panel">
+      <button class="btn secondary" id="testBtn">Send me a test push</button>
+    </div>
   </div>
 
-  <div class="panel">
-    <button class="btn" id="subscribeBtn">Enable push reminders</button>
-    <div class="status" id="status">Fill in config.js with your Worker URL and VAPID key first (see README).</div>
-  </div>
-
-  <div class="panel">
-    <button class="btn secondary" id="testBtn">Send me a test push</button>
+  <div id="pickerView" style="display:none;">
+    <div class="panel">
+      <div id="pickerStatus" class="status">Loading halls…</div>
+      <div id="pickerList"></div>
+    </div>
+    <div class="panel">
+      <a class="link" id="backToSettings">&larr; Back to settings</a>
+    </div>
   </div>
 </div>
 
 <script>
-let prefs = { liked: [], disliked: [] };
-let selectedHallId = null;
-let halls = [];
-
 const $ = id => document.getElementById(id);
+let prefs = { liked: [], disliked: [] };
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -91,21 +113,34 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
-async function loadHalls(){
-  try{
-    const day = new Date().toLocaleDateString('en-US',{weekday:'long'});
-    const res = await fetch(`https://campusmess.in/api/today?day=${day}&meal=Breakfast`, { credentials:'omit' });
-    const body = await res.json();
-    halls = (body.data||[]).map(h => ({id:h.id, name:h.name, type:h.type})).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
-    const sel = $('hallSelect');
-    sel.innerHTML = halls.map(h => `<option value="${h.id}">${h.name} (${h.type})</option>`).join('');
-    selectedHallId = halls[0]?.id;
-    sel.onchange = () => { selectedHallId = Number(sel.value); };
-  }catch(e){
-    $('hallSelect').innerHTML = '<option>Could not load halls — check connection</option>';
-  }
+// ---- shared menu-matching logic (kept in sync with actions/send-reminders.js) ----
+function splitItems(desc) {
+  if (!desc) return [];
+  return desc.split(/[,\/]| with | and /i).map(s => s.trim()).filter(Boolean);
+}
+function verdictFor(desc, prefs) {
+  const items = splitItems(desc);
+  const liked = items.filter(i => (prefs.liked || []).some(p => p && i.toLowerCase().includes(p.toLowerCase())));
+  const disliked = items.filter(i => (prefs.disliked || []).some(p => p && i.toLowerCase().includes(p.toLowerCase())));
+  if (disliked.length && !liked.length) return { tag: 'skip', liked, disliked };
+  if (liked.length) return { tag: 'go', liked, disliked };
+  return { tag: 'meh', liked, disliked };
 }
 
+// Stub — wired up once the campusmess.in special-item booking API is reverse-engineered.
+async function fetchSpecialBookings(hallId, nextDateISO) {
+  return null;
+}
+
+// ---- local persistence (this device's identity for /pick calls) ----
+function loadLocalState() {
+  try { return JSON.parse(localStorage.getItem('messBoardState')) || {}; } catch (e) { return {}; }
+}
+function saveLocalState(state) {
+  localStorage.setItem('messBoardState', JSON.stringify(state));
+}
+
+// ================= SETTINGS VIEW =================
 function renderTags(){
   $('likeTags').innerHTML = prefs.liked.map((t,i)=>`<span class="tag">${t}<button data-list="liked" data-i="${i}">×</button></span>`).join('');
   $('dislikeTags').innerHTML = prefs.disliked.map((t,i)=>`<span class="tag">${t}<button data-list="disliked" data-i="${i}">×</button></span>`).join('');
@@ -113,11 +148,29 @@ function renderTags(){
     prefs[b.dataset.list].splice(Number(b.dataset.i),1); renderTags();
   });
 }
-$('likeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.liked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
-$('dislikeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.disliked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
+
+function initSettingsView(){
+  const saved = loadLocalState();
+  if (saved.name) $('nameInput').value = saved.name;
+  if (saved.prefs) prefs = saved.prefs;
+  if (saved.times) { $('tBreakfast').value = saved.times.Breakfast || $('tBreakfast').value; $('tLunch').value = saved.times.Lunch || $('tLunch').value; $('tDinner').value = saved.times.Dinner || $('tDinner').value; }
+  if (saved.planTimes) { $('pLunch').value = saved.planTimes.Lunch || $('pLunch').value; $('pDinner').value = saved.planTimes.Dinner || $('pDinner').value; }
+  if (typeof saved.nightBeforePlan === 'boolean') $('nightBeforePlan').checked = saved.nightBeforePlan;
+
+  $('likeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.liked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
+  $('dislikeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.disliked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
+  renderTags();
+
+  $('subscribeBtn').onclick = subscribe;
+  $('testBtn').onclick = sendTest;
+
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }
+}
 
 async function subscribe(){
-  if(!window.MESS_CONFIG || !window.MESS_CONFIG.WORKER_URL || !window.MESS_CONFIG.VAPID_PUBLIC_KEY || window.MESS_CONFIG.VAPID_PUBLIC_KEY.startsWith('PASTE')){
+  if(!window.MESS_CONFIG || !window.MESS_CONFIG.WORKER_URL || !window.MESS_CONFIG.VAPID_PUBLIC_KEY || window.MESS_CONFIG.WORKER_URL.startsWith('PASTE')){
     $('status').textContent = 'config.js is not filled in yet — add your Worker URL and VAPID public key first.';
     return;
   }
@@ -143,18 +196,12 @@ async function subscribe(){
     });
   }
 
-  const payload = {
-    subscription: sub.toJSON(),
-    hallId: selectedHallId,
-    prefs,
-    times: {
-      Breakfast: $('tBreakfast').value,
-      Lunch: $('tLunch').value,
-      Dinner: $('tDinner').value
-    },
-    nightBefore: $('nightBefore').checked,
-    name: $('nameInput').value.trim() || 'there'
-  };
+  const name = $('nameInput').value.trim() || 'there';
+  const times = { Breakfast: $('tBreakfast').value, Lunch: $('tLunch').value, Dinner: $('tDinner').value };
+  const planTimes = { Lunch: $('pLunch').value, Dinner: $('pDinner').value };
+  const nightBeforePlan = $('nightBeforePlan').checked;
+
+  const payload = { subscription: sub.toJSON(), prefs, times, planTimes, nightBeforePlan, name };
 
   try{
     const res = await fetch(`${window.MESS_CONFIG.WORKER_URL}/subscribe`, {
@@ -163,6 +210,7 @@ async function subscribe(){
       body: JSON.stringify(payload)
     });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    saveLocalState({ name, prefs, times, planTimes, nightBeforePlan, endpoint: sub.endpoint });
     $('status').textContent = 'Reminders are on. You can close this tab — the schedule runs on the server now.';
   }catch(e){
     $('status').textContent = `Saved locally but failed to reach the server (${e.message}). Check your Worker URL.`;
@@ -179,14 +227,95 @@ async function sendTest(){
   }
 }
 
-$('subscribeBtn').onclick = subscribe;
-$('testBtn').onclick = sendTest;
+// ================= PICKER VIEW =================
+function dayNameFor(dateISO){
+  return new Date(`${dateISO}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long' });
+}
+function nextDateISO(dateISO){
+  const d = new Date(`${dateISO}T12:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0,10);
+}
 
-loadHalls();
-renderTags();
+async function initPickerView(meal, dateISO){
+  $('subline').textContent = `Pick a hall for ${meal.toLowerCase()} — ${dateISO}`;
+  const saved = loadLocalState();
+  if (saved.prefs) prefs = saved.prefs;
 
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if (!saved.endpoint) {
+    $('pickerStatus').textContent = 'Enable push reminders on this device first (Settings), then reopen this link.';
+    return;
+  }
+
+  try {
+    const day = dayNameFor(dateISO);
+    const res = await fetch(`https://campusmess.in/api/today?day=${encodeURIComponent(day)}&meal=${encodeURIComponent(meal)}`, { credentials: 'omit' });
+    const body = await res.json();
+    const halls = (body.data || []).map(h => ({
+      id: h.id, name: h.name, type: h.type,
+      desc: h.currentMenu ? h.currentMenu.description : null
+    }));
+
+    const scored = halls
+      .map(h => ({ ...h, verdict: verdictFor(h.desc || '', prefs) }))
+      .filter(h => h.verdict.tag !== 'skip')
+      .sort((a, b) => {
+        const rank = t => t === 'go' ? 0 : 1;
+        return rank(a.verdict.tag) - rank(b.verdict.tag) || a.name.localeCompare(b.name, undefined, { numeric: true });
+      });
+
+    $('pickerStatus').textContent = scored.length
+      ? `Tap a hall to pick it for ${meal.toLowerCase()}:`
+      : 'No halls left after filtering out your never-eat items today.';
+
+    const nextISO = nextDateISO(dateISO);
+    const rows = await Promise.all(scored.map(async h => {
+      const special = await fetchSpecialBookings(h.id, nextISO);
+      return `
+        <div class="hallcard ${h.verdict.tag === 'go' ? 'go' : ''}" data-hall="${h.id}" data-name="${h.name}">
+          <span class="name">${h.name}</span>
+          <span class="badge ${h.verdict.tag === 'go' ? 'go' : ''}">${h.verdict.tag === 'go' ? 'your kind of meal' : h.type}</span>
+          <div class="desc">${h.desc || 'menu not posted yet'}</div>
+          ${special ? `<div class="special">Bookable for tomorrow: ${special}</div>` : ''}
+        </div>`;
+    }));
+    $('pickerList').innerHTML = rows.join('');
+
+    document.querySelectorAll('.hallcard').forEach(card => {
+      card.onclick = async () => {
+        const hallId = Number(card.dataset.hall);
+        $('pickerStatus').textContent = 'Saving your pick…';
+        try {
+          const res = await fetch(`${window.MESS_CONFIG.WORKER_URL}/pick`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: saved.endpoint, date: dateISO, meal, hallId })
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          $('pickerStatus').textContent = `Picked ${card.dataset.name} for ${meal.toLowerCase()}. We'll ping you when it's time.`;
+          $('pickerList').innerHTML = '';
+        } catch (e) {
+          $('pickerStatus').textContent = `Couldn't save your pick (${e.message}). Tap the hall again to retry.`;
+        }
+      };
+    });
+  } catch (e) {
+    $('pickerStatus').textContent = `Could not load menus (${e.message}).`;
+  }
+}
+
+// ================= ROUTING =================
+const params = new URLSearchParams(location.search);
+const pickMeal = params.get('pick');
+const pickDate = params.get('date');
+
+if (pickMeal && pickDate) {
+  $('settingsView').style.display = 'none';
+  $('pickerView').style.display = 'block';
+  $('backToSettings').onclick = () => { location.href = 'index.html'; };
+  initPickerView(pickMeal, pickDate);
+} else {
+  initSettingsView();
 }
 </script>
 </body>

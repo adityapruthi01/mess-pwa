@@ -1,8 +1,12 @@
 # Mess Board — push reminders
 
-Sends you a real push notification (works with the app/tab closed) at times you
-choose, telling you what's on the menu at your hall and whether it matches
-your taste — plus an optional night-before heads-up.
+Two pushes per meal: a **planning push** (night before for breakfast,
+same-day for lunch/dinner) that opens the app to a menu comparison across
+every hall — halls with any never-eat item dropped, halls with your
+favorites surfaced first — where you tap to pick a hall; then a **confirm
+push** near meal time ("ready for idli and vada at Hall 4?") reflecting
+whatever you picked. If you don't pick in time, it auto-falls-back to its
+best guess based on your taste tags.
 
 **Cost: ₹0.** Everything below runs on free tiers (Cloudflare Workers, GitHub
 Actions, GitHub Pages).
@@ -15,11 +19,17 @@ not fine if you need second-level precision.
 
 ## What you're setting up
 
-1. **The PWA** (`pwa/`) — the installable app itself. Hosted for free on GitHub Pages.
+1. **The PWA** (repo root — `index.html`, `sw.js`, `config.js`, `manifest.json`)
+   — the installable app itself, hosted for free on GitHub Pages. Note it
+   lives at the repo root, not in a `pwa/` subfolder — GitHub Pages on the
+   free plan only serves `/` or `/docs`, not arbitrary subfolders.
 2. **The Worker** (`worker/`) — a tiny Cloudflare Worker that stores your
-   subscription (hall, preferences, reminder times) in a free KV database.
+   subscription (preferences, reminder/plan times) and your daily hall picks
+   in a free KV database. See `worker/subscribe-worker.js` for the exact
+   routes and KV key scheme.
 3. **The Action** (`.github/workflows/reminders.yml` + `actions/`) — runs
-   every 5 minutes, checks if it's time to notify you, and sends the push.
+   every 5 minutes, checks if it's time to send a planning or confirm push
+   for any subscriber, and sends it.
 
 ---
 
@@ -68,7 +78,7 @@ the PWA.
 
 ## Step 3 — Configure and host the PWA
 
-1. Open `pwa/config.js` and fill in:
+1. Open `config.js` (repo root) and fill in:
    ```js
    window.MESS_CONFIG = {
      WORKER_URL: "https://mess-push.yourname.workers.dev",   // from step 2
@@ -76,13 +86,13 @@ the PWA.
    };
    ```
 2. Push the whole `mess-pwa` folder to a new GitHub repo.
-3. In the repo: **Settings → Pages → Deploy from branch**, pick `main` and the
-   `/pwa` folder (or move `pwa/`'s contents to the repo root if GitHub Pages
-   on your plan doesn't support subfolder deploys — either works).
+3. In the repo: **Settings → Pages → Deploy from branch**, pick `master`
+   (or `main`) and `/` (root) — GitHub Pages on the free plan only supports
+   `/` or `/docs`, so the PWA files live at the repo root, not a subfolder.
 4. Your app will be live at something like
    `https://yourusername.github.io/mess-pwa/`. Open it on your phone in
-   Chrome, tap "Add to Home Screen," then open the installed app and hit
-   **Enable push reminders**.
+   Chrome, tap "Add to Home Screen," then open the installed app, set your
+   taste tags and pick/reminder times, and hit **Enable push reminders**.
 
 ---
 
@@ -110,20 +120,31 @@ without waiting for the clock.
 ## How a reminder actually reaches you
 
 1. Every 5 minutes, GitHub spins up a throwaway machine and runs `send-reminders.js`.
-2. It asks your Worker for the list of subscribers (just you, most likely).
-3. For each one, it checks: does the current time (IST) match any of your
-   saved reminder times?
-4. If yes, it calls `campusmess.in`'s public API for that hall + meal, checks
-   the description against your liked/disliked words, and sends a push via
-   the `web-push` library — which delivers it through Chrome's push service
-   straight to your phone, no matter whether the tab or app is open.
+2. It asks your Worker for the list of subscribers (just you, most likely)
+   and for any hall picks already saved for today.
+3. For each subscriber, it checks two things against the current IST time:
+   - **Planning time** (`planTimes.Lunch`/`Dinner`, or 21:00 the night
+     before for breakfast if `nightBeforePlan` is on): sends a teaser push
+     ("Hall 6 has your favorite chole bhature — tap to pick") that deep-links
+     into the PWA's picker screen at `index.html?pick=<meal>&date=<date>`.
+   - **Confirm time** (`times.Breakfast`/`Lunch`/`Dinner`): looks up whatever
+     hall was picked for that meal + date via the Worker's `/picks` route,
+     fetches that hall's menu from `campusmess.in`, and sends the "ready for
+     X at Hall Y?" push. If nothing was picked, it auto-picks the
+     best-matching hall instead and says so.
+4. Either way, delivery goes through the `web-push` library straight to
+   Chrome's push service on your phone — no tab or app needs to be open.
+
+Special-item pre-booking (items bookable a day in advance) isn't wired up
+yet — `fetchSpecialBookings()` in `index.html` is a stub pending a HAR
+capture of that flow from campusmess.in.
 
 ---
 
 ## Files in this project
 
 ```
-pwa/            the installable app (index.html, sw.js, manifest.json, icons)
+index.html, sw.js, manifest.json, config.js, icon-*.png   the installable PWA (repo root)
 worker/         Cloudflare Worker source + config
 actions/        the Node script GitHub Actions runs on schedule
 .github/workflows/reminders.yml   the schedule itself
