@@ -29,8 +29,11 @@
   .row label{font-size:12px;color:var(--chalk-dim);display:block;}
   .status{font-size:12px;color:var(--chalk-dim);margin-top:8px;font-family:'JetBrains Mono',monospace;}
   .tag-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
-  .tag{background:rgba(238,230,211,.08);border:1px solid rgba(238,230,211,.22);border-radius:16px;padding:4px 10px;font-size:12.5px;display:flex;align-items:center;gap:5px;}
-  .tag button{background:none;border:none;color:inherit;cursor:pointer;font-size:13px;}
+  .tastegroup h3{font-family:'Work Sans',sans-serif;font-size:11.5px;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 6px;}
+  .tastegroup:first-child h3{margin-top:0;}
+  .chip{background:rgba(238,230,211,.06);border:1px solid rgba(238,230,211,.22);border-radius:16px;padding:5px 12px;font-size:12.5px;display:inline-block;cursor:pointer;user-select:none;}
+  .chip.liked{background:var(--sage);border-color:var(--sage);color:#16241a;font-weight:600;}
+  .chip.disliked{background:var(--rust);border-color:var(--rust);color:#2a120d;font-weight:600;}
   .hallcard{background:rgba(238,230,211,.05);border:1px solid rgba(238,230,211,.16);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;}
   .hallcard:active{background:rgba(238,230,211,.1);}
   .hallcard.go{border-color:var(--sage);}
@@ -55,10 +58,11 @@
 
     <div class="panel">
       <h2>2. Your taste</h2>
-      <div class="tag-row" id="likeTags"></div>
-      <input type="text" id="likeInput" placeholder="You like: e.g. paneer, idli — Enter to add">
-      <div class="tag-row" id="dislikeTags"></div>
-      <input type="text" id="dislikeInput" placeholder="You never eat: e.g. bhindi — Enter to add">
+      <div class="status" id="tasteStatus">Loading today's menus…</div>
+      <div class="tastegroup" id="tasteBreakfast"></div>
+      <div class="tastegroup" id="tasteLunch"></div>
+      <div class="tastegroup" id="tasteDinner"></div>
+      <div class="tastegroup" id="tasteOther"></div>
     </div>
 
     <div class="panel">
@@ -83,11 +87,7 @@
 
     <div class="panel">
       <button class="btn" id="subscribeBtn">Enable push reminders</button>
-      <div class="status" id="status">Fill in config.js with your Worker URL and VAPID key first (see README).</div>
-    </div>
-
-    <div class="panel">
-      <button class="btn secondary" id="testBtn">Send me a test push</button>
+      <div class="status" id="status">Fill in config.js with your Worker URL and VAPID key first (see README). To test after enabling, use the Actions tab → "Mess reminders" → Run workflow (see README).</div>
     </div>
   </div>
 
@@ -141,15 +141,78 @@ function saveLocalState(state) {
 }
 
 // ================= SETTINGS VIEW =================
-function renderTags(){
-  $('likeTags').innerHTML = prefs.liked.map((t,i)=>`<span class="tag">${t}<button data-list="liked" data-i="${i}">×</button></span>`).join('');
-  $('dislikeTags').innerHTML = prefs.disliked.map((t,i)=>`<span class="tag">${t}<button data-list="disliked" data-i="${i}">×</button></span>`).join('');
-  document.querySelectorAll('.tag button').forEach(b => b.onclick = () => {
-    prefs[b.dataset.list].splice(Number(b.dataset.i),1); renderTags();
-  });
+let tasteItems = { Breakfast: [], Lunch: [], Dinner: [] };
+
+async function loadTasteItems(day){
+  const meals = ['Breakfast', 'Lunch', 'Dinner'];
+  await Promise.all(meals.map(async meal => {
+    try{
+      const res = await fetch(`https://campusmess.in/api/today?day=${encodeURIComponent(day)}&meal=${encodeURIComponent(meal)}`, { credentials: 'omit' });
+      const body = await res.json();
+      const seen = new Set();
+      const items = [];
+      for(const h of (body.data || [])){
+        for(const it of splitItems(h.currentMenu ? h.currentMenu.description : '')){
+          const key = it.toLowerCase();
+          if(!seen.has(key)){ seen.add(key); items.push(it); }
+        }
+      }
+      items.sort((a,b) => a.localeCompare(b));
+      tasteItems[meal] = items;
+    }catch(e){ tasteItems[meal] = []; }
+  }));
 }
 
-function initSettingsView(){
+function chipState(item){
+  const key = item.toLowerCase();
+  if(prefs.liked.some(p => p.toLowerCase() === key)) return 'liked';
+  if(prefs.disliked.some(p => p.toLowerCase() === key)) return 'disliked';
+  return null;
+}
+
+function cycleItem(item){
+  const key = item.toLowerCase();
+  const state = chipState(item);
+  if(state === 'liked'){
+    prefs.liked = prefs.liked.filter(p => p.toLowerCase() !== key);
+    prefs.disliked.push(item);
+  } else if(state === 'disliked'){
+    prefs.disliked = prefs.disliked.filter(p => p.toLowerCase() !== key);
+  } else {
+    prefs.liked.push(item);
+  }
+  renderTasteChips();
+}
+
+function chipsHtml(items){
+  return items.map(it => {
+    const st = chipState(it);
+    const safe = it.replace(/"/g, '&quot;');
+    return `<span class="chip${st ? ` ${st}` : ''}" data-item="${safe}">${it}</span>`;
+  }).join('');
+}
+
+function renderTasteChips(){
+  const groups = [
+    ['tasteBreakfast', 'Breakfast today', tasteItems.Breakfast],
+    ['tasteLunch', 'Lunch today', tasteItems.Lunch],
+    ['tasteDinner', 'Dinner today', tasteItems.Dinner]
+  ];
+  const shown = new Set();
+  for(const [, , items] of groups) items.forEach(i => shown.add(i.toLowerCase()));
+
+  for(const [id, label, items] of groups){
+    $(id).innerHTML = items.length ? `<h3>${label}</h3><div class="tag-row">${chipsHtml(items)}</div>` : '';
+  }
+
+  const otherKeys = [...new Set([...prefs.liked, ...prefs.disliked].map(p => p.toLowerCase()))].filter(k => !shown.has(k));
+  const other = otherKeys.map(k => [...prefs.liked, ...prefs.disliked].find(p => p.toLowerCase() === k));
+  $('tasteOther').innerHTML = other.length ? `<h3>Other (from before)</h3><div class="tag-row">${chipsHtml(other)}</div>` : '';
+
+  document.querySelectorAll('#settingsView .chip').forEach(c => { c.onclick = () => cycleItem(c.dataset.item); });
+}
+
+async function initSettingsView(){
   const saved = loadLocalState();
   if (saved.name) $('nameInput').value = saved.name;
   if (saved.prefs) prefs = saved.prefs;
@@ -157,16 +220,16 @@ function initSettingsView(){
   if (saved.planTimes) { $('pLunch').value = saved.planTimes.Lunch || $('pLunch').value; $('pDinner').value = saved.planTimes.Dinner || $('pDinner').value; }
   if (typeof saved.nightBeforePlan === 'boolean') $('nightBeforePlan').checked = saved.nightBeforePlan;
 
-  $('likeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.liked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
-  $('dislikeInput').addEventListener('keydown', e => { if(e.key==='Enter' && e.target.value.trim()){ prefs.disliked.push(e.target.value.trim()); e.target.value=''; renderTags(); }});
-  renderTags();
-
   $('subscribeBtn').onclick = subscribe;
-  $('testBtn').onclick = sendTest;
 
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
   }
+
+  const day = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  await loadTasteItems(day);
+  $('tasteStatus').textContent = 'Tap a dish: once for like, again for never-eat, again to clear.';
+  renderTasteChips();
 }
 
 async function subscribe(){
@@ -214,16 +277,6 @@ async function subscribe(){
     $('status').textContent = 'Reminders are on. You can close this tab — the schedule runs on the server now.';
   }catch(e){
     $('status').textContent = `Saved locally but failed to reach the server (${e.message}). Check your Worker URL.`;
-  }
-}
-
-async function sendTest(){
-  if(!window.MESS_CONFIG?.WORKER_URL){ $('status').textContent='Fill in config.js first.'; return; }
-  try{
-    const res = await fetch(`${window.MESS_CONFIG.WORKER_URL}/test`, { method:'POST' });
-    $('status').textContent = res.ok ? 'Test push requested — check your notifications.' : `Test failed (HTTP ${res.status}).`;
-  }catch(e){
-    $('status').textContent = `Test failed (${e.message}).`;
   }
 }
 
